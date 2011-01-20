@@ -209,6 +209,7 @@ struct json_object* json_tokener_parse_ex(struct json_tokener *tok,
 {
   struct json_object *obj = NULL;
   char c = '\1';
+  int new_str_len = 0;
 
   tok->char_offset = 0;
   tok->err = json_tokener_success;
@@ -255,6 +256,7 @@ struct json_object* json_tokener_parse_ex(struct json_tokener *tok,
       case '"':
       case '\'':
 	state = json_tokener_state_string;
+  new_str_len = 0;
 	printbuf_reset(tok->pb);
 	tok->quote_char = c;
 	break;
@@ -375,18 +377,21 @@ struct json_object* json_tokener_parse_ex(struct json_tokener *tok,
 	while(1) {
 	  if(c == tok->quote_char) {
 	    printbuf_memappend_fast(tok->pb, case_start, str-case_start);
-	    current = json_object_new_string(tok->pb->buf);
+      new_str_len += (str-case_start);
+	    current = json_object_new_string_len(tok->pb->buf, new_str_len);
 	    saved_state = json_tokener_state_finish;
 	    state = json_tokener_state_eatws;
 	    break;
 	  } else if(c == '\\') {
 	    printbuf_memappend_fast(tok->pb, case_start, str-case_start);
+      new_str_len += str-case_start;
 	    saved_state = json_tokener_state_string;
 	    state = json_tokener_state_string_escape;
 	    break;
 	  }
 	  if (!ADVANCE_CHAR(str, tok) || !POP_CHAR(c, tok)) {
 	    printbuf_memappend_fast(tok->pb, case_start, str-case_start);
+      new_str_len += str-case_start;
 	    goto out;
 	  }
 	}
@@ -399,6 +404,7 @@ struct json_object* json_tokener_parse_ex(struct json_tokener *tok,
       case '\\':
       case '/':
 	printbuf_memappend_fast(tok->pb, &c, 1);
+  new_str_len++;
 	state = saved_state;
 	break;
       case 'b':
@@ -409,6 +415,8 @@ struct json_object* json_tokener_parse_ex(struct json_tokener *tok,
 	else if(c == 'n') printbuf_memappend_fast(tok->pb, "\n", 1);
 	else if(c == 'r') printbuf_memappend_fast(tok->pb, "\r", 1);
 	else if(c == 't') printbuf_memappend_fast(tok->pb, "\t", 1);
+	// todo: not perfect
+  new_str_len++;
 	state = saved_state;
 	break;
       case 'u':
@@ -441,6 +449,7 @@ struct json_object* json_tokener_parse_ex(struct json_tokener *tok,
                     /* Hi surrogate was not followed by a low surrogate */
                     /* Replace the hi and process the rest normally */
 		    printbuf_memappend_fast(tok->pb, (char*)utf8_replacement_char, 3);
+        new_str_len+=3;
                   }
                   got_hi_surrogate = 0;
                 }
@@ -448,10 +457,12 @@ struct json_object* json_tokener_parse_ex(struct json_tokener *tok,
 		if (tok->ucs_char < 0x80) {
 		  unescaped_utf[0] = tok->ucs_char;
 		  printbuf_memappend_fast(tok->pb, (char*)unescaped_utf, 1);
+      new_str_len++;
 		} else if (tok->ucs_char < 0x800) {
 		  unescaped_utf[0] = 0xc0 | (tok->ucs_char >> 6);
 		  unescaped_utf[1] = 0x80 | (tok->ucs_char & 0x3f);
 		  printbuf_memappend_fast(tok->pb, (char*)unescaped_utf, 2);
+      new_str_len+=2;
 		} else if (IS_HIGH_SURROGATE(tok->ucs_char)) {
                   /* Got a high surrogate.  Remember it and look for the
                    * the beginning of another sequence, which should be the
@@ -472,6 +483,7 @@ struct json_object* json_tokener_parse_ex(struct json_tokener *tok,
                      */
 	            if (!ADVANCE_CHAR(str, tok) || !POP_CHAR(c, tok)) {
 	              printbuf_memappend_fast(tok->pb, (char*)utf8_replacement_char, 3);
+                new_str_len+=3;
 	              goto out;
                     }
 	            tok->ucs_char = 0;
@@ -483,24 +495,31 @@ struct json_object* json_tokener_parse_ex(struct json_tokener *tok,
                      * and pretend we finished.
                      */
 		    printbuf_memappend_fast(tok->pb, (char*)utf8_replacement_char, 3);
+		    new_str_len+=3;
+        
                   }
 		} else if (IS_LOW_SURROGATE(tok->ucs_char)) {
                   /* Got a low surrogate not preceded by a high */
 		  printbuf_memappend_fast(tok->pb, (char*)utf8_replacement_char, 3);
+		  new_str_len+=3;
+      
                 } else if (tok->ucs_char < 0x10000) {
 		  unescaped_utf[0] = 0xe0 | (tok->ucs_char >> 12);
 		  unescaped_utf[1] = 0x80 | ((tok->ucs_char >> 6) & 0x3f);
 		  unescaped_utf[2] = 0x80 | (tok->ucs_char & 0x3f);
 		  printbuf_memappend_fast(tok->pb, (char*)unescaped_utf, 3);
+		  new_str_len+=3;
 		} else if (tok->ucs_char < 0x110000) {
 		  unescaped_utf[0] = 0xf0 | ((tok->ucs_char >> 18) & 0x07);
 		  unescaped_utf[1] = 0x80 | ((tok->ucs_char >> 12) & 0x3f);
 		  unescaped_utf[2] = 0x80 | ((tok->ucs_char >> 6) & 0x3f);
 		  unescaped_utf[3] = 0x80 | (tok->ucs_char & 0x3f);
 		  printbuf_memappend_fast(tok->pb, (char*)unescaped_utf, 4);
+		  new_str_len+=4;
 		} else {
                   /* Don't know what we got--insert the replacement char */
 		  printbuf_memappend_fast(tok->pb, (char*)utf8_replacement_char, 3);
+		  new_str_len+=3;
                 }
 		state = saved_state;
 		break;
@@ -512,6 +531,7 @@ struct json_object* json_tokener_parse_ex(struct json_tokener *tok,
 	  if (!ADVANCE_CHAR(str, tok) || !POP_CHAR(c, tok)) {
             if (got_hi_surrogate) /* Clean up any pending chars */
 	      printbuf_memappend_fast(tok->pb, (char*)utf8_replacement_char, 3);
+	      new_str_len+=3;
 	    goto out;
 	  }
 	}

@@ -20,6 +20,7 @@
 #include "printbuf.h"
 #include "linkhash.h"
 #include "arraylist.h"
+#include "utf8.h"
 #include "json_inttypes.h"
 #include "json_object.h"
 #include "json_object_private.h"
@@ -85,41 +86,99 @@ static void json_object_fini(void) {
 
 static int json_escape_str(struct printbuf *pb, char *str, int len)
 {
-  int pos = 0, start_offset = 0;
-  unsigned char c;
-  while (len--) {
+  int32_t codepoint;
+  int pos = 0; // position in input *str
+  int start_offset = 0; // position last read until from *str
+  int remain = len;
+  int utf8_sequence_length;
+  unsigned char c; // character for loop
+  while (remain--) {
     c = str[pos];
-    switch(c) {
-    case '\b':
-    case '\n':
-    case '\r':
-    case '\t':
-    case '"':
-    case '\\':
-    case '/':
+    utf8_sequence_length = utf8_check_first(c);
+    // printf("remain:%d len:%d pos:%d start:%d utf8_sequence_length:%d c:%x\n", remain, len, pos, start_offset, utf8_sequence_length, c);
+    if (utf8_sequence_length == 0) {
+      // copy up to here and skip
+      // 0 == invalid
       if(pos - start_offset > 0)
-	printbuf_memappend(pb, str + start_offset, pos - start_offset);
-      if(c == '\b') printbuf_memappend(pb, "\\b", 2);
-      else if(c == '\n') printbuf_memappend(pb, "\\n", 2);
-      else if(c == '\r') printbuf_memappend(pb, "\\r", 2);
-      else if(c == '\t') printbuf_memappend(pb, "\\t", 2);
-      else if(c == '"') printbuf_memappend(pb, "\\\"", 2);
-      else if(c == '\\') printbuf_memappend(pb, "\\\\", 2);
-      else if(c == '/') printbuf_memappend(pb, "\\/", 2);
+        printbuf_memappend(pb, str + start_offset, pos - start_offset);
       start_offset = ++pos;
-      break;
-    default:
-      if(c < ' ') {
-	if(pos - start_offset > 0)
-	  printbuf_memappend(pb, str + start_offset, pos - start_offset);
-	sprintbuf(pb, "\\u00%c%c",
-		  json_hex_chars[c >> 4],
-		  json_hex_chars[c & 0xf]);
-	start_offset = ++pos;
-      } else pos++;
+    } else if ( utf8_sequence_length == 1 ){
+      // a single character < 0x80
+      switch(c){
+        case '\b':
+        case '\n':
+        case '\r':
+        case '\t':
+        case '"':
+        case '\\':
+        case '/':
+          if(pos - start_offset > 0)
+              // append the block up to now
+              printbuf_memappend(pb, str + start_offset, pos - start_offset);
+          if(c == '\b') printbuf_memappend(pb, "\\b", 2);
+          else if(c == '\n') printbuf_memappend(pb, "\\n", 2);
+          else if(c == '\r') printbuf_memappend(pb, "\\r", 2);
+          else if(c == '\t') printbuf_memappend(pb, "\\t", 2);
+          else if(c == '"') printbuf_memappend(pb, "\\\"", 2);
+          else if(c == '\\') printbuf_memappend(pb, "\\\\", 2);
+          else if(c == '/') printbuf_memappend(pb, "\\/", 2);
+          start_offset = ++pos;
+          break;
+        default:
+          if (c < 0x20 ) {
+            if(pos - start_offset > 0)
+              // append the block up to now
+              printbuf_memappend(pb, str + start_offset, pos - start_offset);
+            //TODO: is this any different then sprintbuf %x ?
+            sprintbuf(pb, "\\u00%c%c",
+              json_hex_chars[c >> 4],   
+              json_hex_chars[c & 0xf]);
+            start_offset = ++pos;
+          } 
+          else pos++;
+      }
+    } else {
+      // utf8_sequence_length > 1 so skip that many iterations
+      remain -= (utf8_sequence_length - 1);
+      if (remain < 0) {
+        break;
+      }
+      if( !utf8_check_full(&str[pos], utf8_sequence_length, &codepoint)) {
+        if(pos - start_offset > 0)
+            // append the block up to now
+            printbuf_memappend(pb, str + start_offset, pos - start_offset);
+          pos += utf8_sequence_length;
+          start_offset = pos;
+      } else {
+        if(pos - start_offset > 0)
+          // append the block up to now
+          printbuf_memappend(pb, str + start_offset, pos - start_offset);
+    
+        pos += utf8_sequence_length;
+        start_offset = pos;
+        
+        /* codepoint is in BMP */
+        if(codepoint < 0x10000)
+        {
+          sprintbuf(pb, "\\u%04x", codepoint);
+        }
+    
+        /* not in BMP -> construct a UTF-16 surrogate pair */
+        else
+        {
+          int32_t first, last;
+    
+          codepoint -= 0x10000;
+          first = 0xD800 | ((codepoint & 0xffc00) >> 10);
+          last = 0xDC00 | (codepoint & 0x003ff);
+    
+          sprintbuf(pb, "\\u%04x\\u%04x", first, last);
+        }
+      }
     }
   }
   if(pos - start_offset > 0)
+    // copy anything left
     printbuf_memappend(pb, str + start_offset, pos - start_offset);
   return 0;
 }
@@ -467,7 +526,9 @@ struct json_object* json_object_new_string_len(const char *s, int len)
   if(!jso) return NULL;
   jso->_delete = &json_object_string_delete;
   jso->_to_json_string = &json_object_string_to_json_string;
-  jso->o.c_string.str = malloc(len);
+  jso->o.c_string.str = malloc(len+1);
+  // null terminate this so we can internall do string comparisons etc
+  jso->o.c_string.str[len]='\0';
   memcpy(jso->o.c_string.str, (void *)s, len);
   jso->o.c_string.len = len;
   return jso;
