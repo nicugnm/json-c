@@ -1,0 +1,4 @@
+input: "I\u00f1t\u00ebrn\u00e2ti\u00f4n\ufffdliz\u00e6ti\u00f8n\u0000"
+output: "I\u00f1t\u00ebrn\u00e2ti\u00f4n\ufffdliz\u00e6ti\u00f8n\u0000"
+utf8: Iñtërnâtiôn�lizætiøn
+PASS

@@ -527,7 +527,7 @@ struct json_object* json_object_new_string_len(const char *s, int len)
   jso->_delete = &json_object_string_delete;
   jso->_to_json_string = &json_object_string_to_json_string;
   jso->o.c_string.str = malloc(len+1);
-  // null terminate this so we can internall do string comparisons etc
+  // null terminate this so we can internally do string comparisons etc
   jso->o.c_string.str[len]='\0';
   memcpy(jso->o.c_string.str, (void *)s, len);
   jso->o.c_string.len = len;
