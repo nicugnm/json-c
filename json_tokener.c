@@ -197,6 +197,7 @@ char* strndup(const char* str, size_t n)
  *   For convenience of existing conditionals, returns the old value of c (0 on eof)
  *   Implicit inputs:  c var
  */
+#pragma GCC diagnostic ignored "-Wunused-value"
 #define ADVANCE_CHAR(str, tok) \
   ( ++(str), ((tok)->char_offset)++, c)
 
@@ -464,6 +465,7 @@ struct json_object* json_tokener_parse_ex(struct json_tokener *tok,
                       (str[1] == '\\') &&
                       (str[2] == 'u'))
                   {
+#pragma GCC diagnostic ignored "-Wunused-value"
 	            ADVANCE_CHAR(str, tok);
 	            ADVANCE_CHAR(str, tok);
 
