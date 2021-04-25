@@ -9,6 +9,8 @@
  *
  */
 
+#include <stdint.h>
+
 #ifndef _json_object_h_
 #define _json_object_h_
 
